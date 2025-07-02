@@ -61,6 +61,7 @@ void sm2_z256_modp_mont_exp(sm2_z256_t r, const sm2_z256_t a, const sm2_z256_t e
 void sm2_z256_modp_mont_inv(sm2_z256_t r, const sm2_z256_t a);
 int  sm2_z256_modp_mont_sqrt(sm2_z256_t r, const sm2_z256_t a);
 
+// 这个是标量运算
 void sm2_z256_modn_add(sm2_z256_t r, const sm2_z256_t a, const sm2_z256_t b);
 void sm2_z256_modn_sub(sm2_z256_t r, const sm2_z256_t a, const sm2_z256_t b);
 void sm2_z256_modn_neg(sm2_z256_t r, const sm2_z256_t a);
