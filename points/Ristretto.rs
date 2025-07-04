@@ -1,20 +1,5 @@
 #![allow(non_snake_case)]
 
-//! Notes on the details of the encoding can be found in the
-//! [Details][ristretto_notes] section of the Ristretto website.
-//!
-//! [cryptonote]:
-//! https://moderncrypto.org/mail-archive/curves/2017/000898.html
-//! [ed25519_hkd]:
-//! https://moderncrypto.org/mail-archive/curves/2017/000858.html
-//! [ristretto_coffee]:
-//! https://en.wikipedia.org/wiki/Ristretto
-//! [ristretto_notes]:
-//! https://ristretto.group/details/index.html
-//! [why_ristretto]:
-//! https://ristretto.group/why_ristretto.html
-//! [ristretto_main]:
-//! https://ristretto.group/
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -68,24 +53,11 @@ use crate::traits::Identity;
 #[cfg(feature = "alloc")]
 use crate::traits::{MultiscalarMul, VartimeMultiscalarMul, VartimePrecomputedMultiscalarMul};
 
-// ------------------------------------------------------------------------
-// Compressed points
-// ------------------------------------------------------------------------
-
-// 用于表示 Ristretto 群上点的压缩形式，存储为 32 字节的数组
-// Ristretto 是基于 Curve25519 的素数阶子群，消除余因子（Curve25519 的余因子为 8）带来的安全问题。
-// Ristretto 点通过压缩编码（CompressedRistretto）存储为 32 字节，适合高效传输和存储。
-// CompressedRistretto 存储点的规范化编码（canonical encoding），通常是点的 y 坐标（或其变体），通过数学运算（如 RistrettoPoint::compress）生成。
-
-// SM2 点的压缩格式遵循 GM/T 0003-2012 标准：
-// 33 字节：1 字节前缀（0x02 表示 y 为偶数，0x03 表示 y 为奇数）+ 32 字节 x 坐标。
-// 未压缩格式为 65 字节（0x04 + x + y）。
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-// cql SM2 需要改成33字节
 
-pub struct CompressedRistretto(pub [u8; 32]);
-// 提供 定常时间比较，防止时序攻击
+// SM2 压缩是33字节，32+1
+pub struct CompressedRistretto(pub [u8; 33]);
 
 impl ConstantTimeEq for CompressedRistretto {
     fn ct_eq(&self, other: &CompressedRistretto) -> Choice {
@@ -94,121 +66,27 @@ impl ConstantTimeEq for CompressedRistretto {
 }
 
 impl CompressedRistretto {
-    /// Copy the bytes of this `CompressedRistretto`.
-    // 返回压缩点的 32 字节数组副本。
-    pub const fn to_bytes(&self) -> [u8; 32] {
+    pub const fn to_bytes(&self) -> [u8; 33] {
         self.0
     }
 
-    /// View this `CompressedRistretto` as an array of bytes.
-    // 返回压缩点的字节数组引用（&[u8; 32]）。
-    pub const fn as_bytes(&self) -> &[u8; 32] {
+    pub const fn as_bytes(&self) -> &[u8; 33] {
         &self.0
     }
 
-    /// Construct a `CompressedRistretto` from a slice of bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TryFromSliceError`] if the input `bytes` slice does not have
-    /// a length of 32.
-     // 从字节切片（&[u8]）构造 CompressedRistretto。
     pub fn from_slice(bytes: &[u8]) -> Result<CompressedRistretto, TryFromSliceError> {
         bytes.try_into().map(CompressedRistretto)
     }
 
-    /// Attempt to decompress to an `RistrettoPoint`.
-    ///
-    /// # Return
-    ///
-    /// - `Some(RistrettoPoint)` if `self` was the canonical encoding of a point;
-    ///
-    /// - `None` if `self` was not the canonical encoding of a point.
     // 尝试将 CompressedRistretto 解压为 RistrettoPoint。
     pub fn decompress(&self) -> Option<RistrettoPoint> {
-        let (s_encoding_is_canonical, s_is_negative, s) = decompress::step_1(self);
-
-        if (!s_encoding_is_canonical | s_is_negative).into() {
-            return None;
-        }
-
-        let (ok, t_is_negative, y_is_zero, res) = decompress::step_2(s);
-
-        if (!ok | t_is_negative | y_is_zero).into() {
-            None
-        } else {
-            Some(res)
-        }
-    }
-}
-
-mod decompress {
-    use super::*;
-
-    pub(super) fn step_1(repr: &CompressedRistretto) -> (Choice, Choice, FieldElement) {
-        // Step 1. Check s for validity:
-        // 1.a) s must be 32 bytes (we get this from the type system)
-        // 1.b) s < p
-        // 1.c) s is nonnegative
-        //
-        // Our decoding routine ignores the high bit, so the only
-        // possible failure for 1.b) is if someone encodes s in 0..18
-        // as s+p in 2^255-19..2^255-1.  We can check this by
-        // converting back to bytes, and checking that we get the
-        // original input, since our encoding routine is canonical.
-
-        let s = FieldElement::from_bytes(repr.as_bytes());
-        let s_bytes_check = s.as_bytes();
-        let s_encoding_is_canonical = s_bytes_check[..].ct_eq(repr.as_bytes());
-        let s_is_negative = s.is_negative();
-
-        (s_encoding_is_canonical, s_is_negative, s)
-    }
-
-    pub(super) fn step_2(s: FieldElement) -> (Choice, Choice, Choice, RistrettoPoint) {
-        // Step 2.  Compute (X:Y:Z:T).
-        let one = FieldElement::ONE;
-        let ss = s.square();
-        let u1 = &one - &ss; //  1 + as²
-        let u2 = &one + &ss; //  1 - as²    where a=-1
-        let u2_sqr = u2.square(); // (1 - as²)²
-
-        // v == ad(1+as²)² - (1-as²)²            where d=-121665/121666
-        let v = &(&(-&constants::EDWARDS_D) * &u1.square()) - &u2_sqr;
-
-        let (ok, I) = (&v * &u2_sqr).invsqrt(); // 1/sqrt(v*u_2²)
-
-        let Dx = &I * &u2; // 1/sqrt(v)
-        let Dy = &I * &(&Dx * &v); // 1/u2
-
-        // x == | 2s/sqrt(v) | == + sqrt(4s²/(ad(1+as²)² - (1-as²)²))
-        let mut x = &(&s + &s) * &Dx;
-        let x_neg = x.is_negative();
-        x.conditional_negate(x_neg);
-
-        // y == (1-as²)/(1+as²)
-        let y = &u1 * &Dy;
-
-        // t == ((1+as²) sqrt(4s²/(ad(1+as²)² - (1-as²)²)))/(1-as²)
-        let t = &x * &y;
-
-        (
-            ok,
-            t.is_negative(),
-            y.is_zero(),
-            RistrettoPoint(EdwardsPoint {
-                X: x,
-                Y: y,
-                Z: one,
-                T: t,
-            }),
-        )
+        ffi_sm2_z256_point_from_octets(self.as_bytes(), 33).map(RistrettoPoint)
     }
 }
 
 impl Identity for CompressedRistretto {
     fn identity() -> CompressedRistretto {
-        CompressedRistretto([0u8; 32])
+        CompressedRistretto([0u8; 33])
     }
 }
 
@@ -226,175 +104,15 @@ impl TryFrom<&[u8]> for CompressedRistretto {
     }
 }
 
-// ------------------------------------------------------------------------
-// Serde support
-// ------------------------------------------------------------------------
-// Serializes to and from `RistrettoPoint` directly, doing compression
-// and decompression internally.  This means that users can create
-// structs containing `RistrettoPoint`s and use Serde's derived
-// serializers to serialize those structures.
 
-// 暂时先不管, 没有开启serde选项, 不会起作用
-#[cfg(feature = "serde")]
-use serde::de::Visitor;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-#[cfg(feature = "serde")]
-impl Serialize for RistrettoPoint {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeTuple;
-        let mut tup = serializer.serialize_tuple(32)?;
-        for byte in self.compress().as_bytes().iter() {
-            tup.serialize_element(byte)?;
-        }
-        tup.end()
-    }
-}
-
-#[cfg(feature = "serde")]
-impl Serialize for CompressedRistretto {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeTuple;
-        let mut tup = serializer.serialize_tuple(32)?;
-        for byte in self.as_bytes().iter() {
-            tup.serialize_element(byte)?;
-        }
-        tup.end()
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> Deserialize<'de> for RistrettoPoint {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct RistrettoPointVisitor;
-
-        impl<'de> Visitor<'de> for RistrettoPointVisitor {
-            type Value = RistrettoPoint;
-
-            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                formatter.write_str("a valid point in Ristretto format")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<RistrettoPoint, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut bytes = [0u8; 32];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..32 {
-                    bytes[i] = seq
-                        .next_element()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(i, &"expected 32 bytes"))?;
-                }
-                CompressedRistretto(bytes)
-                    .decompress()
-                    .ok_or_else(|| serde::de::Error::custom("decompression failed"))
-            }
-        }
-
-        deserializer.deserialize_tuple(32, RistrettoPointVisitor)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> Deserialize<'de> for CompressedRistretto {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct CompressedRistrettoVisitor;
-
-        impl<'de> Visitor<'de> for CompressedRistrettoVisitor {
-            type Value = CompressedRistretto;
-
-            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                formatter.write_str("32 bytes of data")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<CompressedRistretto, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut bytes = [0u8; 32];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..32 {
-                    bytes[i] = seq
-                        .next_element()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(i, &"expected 32 bytes"))?;
-                }
-                Ok(CompressedRistretto(bytes))
-            }
-        }
-
-        deserializer.deserialize_tuple(32, CompressedRistrettoVisitor)
-    }
-}
-
-// ------------------------------------------------------------------------
-// Internal point representations
-// ------------------------------------------------------------------------
-
-/// A `RistrettoPoint` represents a point in the Ristretto group for
-/// Curve25519.  Ristretto, a variant of Decaf, constructs a
-/// prime-order group as a quotient group of a subgroup of (the
-/// Edwards form of) Curve25519.
-///
-/// Internally, a `RistrettoPoint` is implemented as a wrapper type
-/// around `EdwardsPoint`, with custom equality, compression, and
-/// decompression routines to account for the quotient.  This means that
-/// operations on `RistrettoPoint`s are exactly as fast as operations on
-/// `EdwardsPoint`s.
-///
 #[derive(Copy, Clone)]
 pub struct RistrettoPoint(pub(crate) EdwardsPoint);
 
 impl RistrettoPoint {
-    /// Compress this point using the Ristretto encoding.
-    // 将 RistrettoPoint 压缩为 32 字节的 CompressedRistretto
-    // SM2 是要对应33字节吧
+    
+    // SM2 压缩为33字节
     pub fn compress(&self) -> CompressedRistretto {
-        let mut X = self.0.X;
-        let mut Y = self.0.Y;
-        let Z = &self.0.Z;
-        let T = &self.0.T;
-
-        let u1 = &(Z + &Y) * &(Z - &Y);
-        let u2 = &X * &Y;
-        // Ignore return value since this is always square
-        let (_, invsqrt) = (&u1 * &u2.square()).invsqrt();
-        let i1 = &invsqrt * &u1;
-        let i2 = &invsqrt * &u2;
-        let z_inv = &i1 * &(&i2 * T);
-        let mut den_inv = i2;
-
-        let iX = &X * &constants::SQRT_M1;
-        let iY = &Y * &constants::SQRT_M1;
-        let ristretto_magic = &constants::INVSQRT_A_MINUS_D;
-        let enchanted_denominator = &i1 * ristretto_magic;
-
-        let rotate = (T * &z_inv).is_negative();
-
-        X.conditional_assign(&iY, rotate);
-        Y.conditional_assign(&iX, rotate);
-        den_inv.conditional_assign(&enchanted_denominator, rotate);
-
-        Y.conditional_negate((&X * &z_inv).is_negative());
-
-        let mut s = &den_inv * &(Z - &Y);
-        let s_is_negative = s.is_negative();
-        s.conditional_negate(s_is_negative);
-
-        CompressedRistretto(s.as_bytes())
+        ffi_sm2_z256_point_to_compressed_octets(&self.0).map(CompressedRistretto)
     }
 
     /// Double-and-compress a batch of points.  The Ristretto encoding

@@ -42,6 +42,9 @@ use crate::constants;
 pub(crate) type UnpackedScalar = backend::serial::u64::scalar::Scalar52;
 
 
+// 群阶相关的标量 域和运算
+
+
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Copy, Clone, Hash)]
 pub struct Scalar {
@@ -384,7 +387,7 @@ impl UnpackedScalar {
         
         let mont_self = ffi_sm2_z256_modn_to_mont(&self);
         // 标量 蒙哥马利模逆
-        let mont_inv = ff_sm2_z256_modn_mont_inv(&mont_self);
+        let mont_inv = ffi_sm2_z256_modn_mont_inv(&mont_self);
         
         mont_inv
     }
@@ -396,45 +399,7 @@ impl UnpackedScalar {
 }
 
 
-/// Read one or more u64s stored as little endian bytes.
-///
-/// ## Panics
-/// Panics if `src.len() != 8 * dst.len()`.
-fn read_le_u64_into(src: &[u8], dst: &mut [u64]) {
-    assert!(
-        src.len() == 8 * dst.len(),
-        "src.len() = {}, dst.len() = {}",
-        src.len(),
-        dst.len()
-    );
-    for (bytes, val) in src.chunks(8).zip(dst.iter_mut()) {
-        *val = u64::from_le_bytes(
-            bytes
-                .try_into()
-                .expect("Incorrect src length, should be 8 * dst.len()"),
-        );
-    }
-}
 
-/// _Clamps_ the given little-endian representation of a 32-byte integer. Clamping the value puts
-/// it in the range:
-///
-/// **n ∈ 2^254 + 8\*{0, 1, 2, 3, . . ., 2^251 − 1}**
-///
-/// # Explanation of clamping
-///
-/// For Curve25519, h = 8, and multiplying by 8 is the same as a binary left-shift by 3 bits.
-/// If you take a secret scalar value between 2^251 and 2^252 – 1 and left-shift by 3 bits
-/// then you end up with a 255-bit number with the most significant bit set to 1 and
-/// the least-significant three bits set to 0.
-///
-/// The Curve25519 clamping operation takes **an arbitrary 256-bit random value** and
-/// clears the most-significant bit (making it a 255-bit number), sets the next bit, and then
-/// clears the 3 least-significant bits. In other words, it directly creates a scalar value that is
-/// in the right form and pre-multiplied by the cofactor.
-///
-/// See [here](https://neilmadden.blog/2020/05/28/whats-the-curve25519-clamping-all-about/) for
-/// more details.
 #[must_use]
 pub const fn clamp_integer(mut bytes: [u8; 32]) -> [u8; 32] {
     bytes[0] &= 0b1111_1000;

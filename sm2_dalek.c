@@ -152,3 +152,28 @@ void func_sm2_z256_modn_mont_sqr(uint64_t *value, const uint64_t *a) {
 void func_sm2_z256_modn_mont_inv(uint64_t *value, const uint64_t *a) {
     sm2_z256_modn_mont_inv(value, a);
 }
+
+
+// 点 转 字节
+void func_sm2_z256_point_to_bytes(
+    uint8_t *value, 
+    const SM2_Z256_POINT *point) {
+    sm2_z256_point_to_bytes(point, value);
+}
+
+// 字节数据 转 点
+// 压缩/非压缩都可以用
+void func_sm2_z256_point_from_octets(SM2_Z256_POINT *point, const uint8_t *buf, const size_t inlen) {
+    sm2_z256_point_from_octets(point, buf, inlen);
+}
+
+// 点 压缩为 33字节
+void func_sm2_z256_point_to_compressed_octets(uint8_t *value, const SM2_Z256_POINT *point) {
+    sm2_z256_point_to_compressed_octets(point, value);
+}
+
+
+// 两倍点
+void func_sm2_z256_point_dbl(SM2_Z256_POINT *dbl_point, const SM2_Z256_POINT *point) {
+    sm2_z256_point_dbl(dbl_point, point);
+}

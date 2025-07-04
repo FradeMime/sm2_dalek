@@ -1,4 +1,13 @@
 use libc::{c_int, c_uchar, size_t};
+
+
+#[repr(C)]
+pub struct SM2_Z256_POINT {
+    pub X: [u64; 4],
+    pub Y: [u64; 4],
+    pub Z: [u64; 4],
+}
+
 extern "C" {
 
     // 字节数组转域
@@ -61,6 +70,17 @@ extern "C" {
     fn func_sm2_z256_modn_mont_sqr(value: *mut u64, a: *const u64);
     // 标量 蒙哥马利模逆
     fn func_sm2_z256_modn_mont_inv(value: *mut u64, a: *const u64);
+
+
+    // 点转字节 64字节
+    fn func_sm2_z256_point_to_bytes(value: *mut u8, point: *const SM2_Z256_POINT);
+    // 字节转点 任意
+    fn func_sm2_z256_point_from_octets(point: *mut SM2_Z256_POINT, buf: *const u8, inlen: const usize);
+    // SM2点压缩 33字节
+    fn func_sm2_z256_point_to_compressed_octets(value: *mut u8, point: *const SM2_Z256_POINT);
+    // 两倍点
+    fn func_sm2_z256_point_dbl(dbl_point: *mut SM2_Z256_POINT, point: *const SM2_Z256_POINT);
+
 }
 
 // 字节数组转域
@@ -310,7 +330,7 @@ pub fn ffi_sm2_z256_modn_mont_sqr(a: &[u64; 4]) -> Result<[u64; 4], String> {
 }
 
 // 标量 蒙哥马利模逆
-pub fn ff_sm2_z256_modn_mont_inv(a: &[u64; 4]) -> Result<[u64; 4], String> {
+pub fn ffi_sm2_z256_modn_mont_inv(a: &[u64; 4]) -> Result<[u64; 4], String> {
     let mut value = [0u64; 4];
     unsafe {
         func_sm2_z256_modn_mont_inv(value.as_mut_ptr(), a.as_ptr())
@@ -318,3 +338,82 @@ pub fn ff_sm2_z256_modn_mont_inv(a: &[u64; 4]) -> Result<[u64; 4], String> {
     Ok(value)
 }
 
+
+// 点 转 字节 64字节
+pub fn ffi_sm2_z256_point_to_bytes(point: &EdwardsPoint) -> Result<[u8; 64], String> {
+    let mut value = [0u8; 64];
+
+    // 手动构造C层兼容结构
+    let c_point = SM2_Z256_POINT {
+        X: point.X.0,
+        Y: point.Y.0,
+        Z: point.Z.0,
+    };
+
+    unsafe {
+        func_sm2_z256_point_to_bytes(value.as_mut_ptr(), &c_point as *const SM2_Z256_POINT);
+    }
+    Ok(value)
+}
+
+// 字节 转 点
+// 任意
+pub fn ffi_sm2_z256_point_from_octets(buf: &[u8], inlen: &usize) -> Result<EdwardsPoint, String> {
+    // 安全拷贝到中间 Vec 缓冲区
+    let mut in_buf = Vec::with_capacity(inlen);
+    in_buf.extend_from_slice(&buf[..inlen]);
+
+    let mut c_point = SM2_Z256_POINT {
+        X: [0u64; 4],
+        Y: [0u64; 4],
+        Z: [0u64; 4],
+    };
+    unsafe {
+        func_sm2_z256_point_from_octets(&mut c_point as *mut SM2_Z256_POINT, buf.as_ptr(), inlen)
+    }
+    Ok(point)
+}
+
+// 点 压缩 33字节
+pub fn ffi_sm2_z256_point_to_compressed_octets(point: &EdwardsPoint) -> Result<[u8; 33], String> {
+    let mut value = [0u8; 33];
+
+    // 手动构造C层兼容结构
+    let c_point = SM2_Z256_POINT {
+        X: point.X.0,
+        Y: point.Y.0,
+        Z: point.Z.0,
+    };
+
+    unsafe {
+        func_sm2_z256_point_to_compressed_octets(value.as_mut_ptr(), &c_point as *const SM2_Z256_POINT);
+    }
+    Ok(value)
+}
+
+// 两倍点
+pub fn ffi_sm2_z256_point_dbl(point: &EdwardsPoint) -> Result<EdwardsPoint, String> {
+
+    let c_point = SM2_Z256_POINT {
+        X: point.X.0,
+        Y: point.Y.0,
+        Z: point.Z.0,
+    };
+
+    let dbl_point = SM2_Z256_POINT {
+        X: [0u64; 4],
+        Y: [0u64; 4],
+        Z: [0u64; 4],
+    };
+    
+    unsafe {
+        func_sm2_z256_point_dbl(&mut dbl_point as *mut SM2_Z256_POINT, &c_point as *const SM2_Z256_POINT);
+    }
+    let result = EdwardsPoint {
+        X: FieldElement(dbl_point.X),
+        Y: FieldElement(dbl_point.Y),
+        Z: FieldElement(dbl_point.Z),
+    };
+
+    Ok(result)
+}
