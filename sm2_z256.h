@@ -138,9 +138,7 @@ int sm2_z256_point_from_x_bytes(SM2_Z256_POINT *P, const uint8_t x_bytes[32], in
 int sm2_z256_point_from_hash(SM2_Z256_POINT *R, const uint8_t *data, size_t datalen, int y_is_odd);
 int sm2_z256_point_from_octets(SM2_Z256_POINT *P, const uint8_t *in, size_t inlen);
 
-// 点的压缩表示，对应Ewords
 int sm2_z256_point_to_uncompressed_octets(const SM2_Z256_POINT *P, uint8_t out[65]);
-// 压缩
 int sm2_z256_point_to_compressed_octets(const SM2_Z256_POINT *P, uint8_t out[33]);
 
 /*
