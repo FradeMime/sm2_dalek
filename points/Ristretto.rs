@@ -115,130 +115,33 @@ impl RistrettoPoint {
         ffi_sm2_z256_point_to_compressed_octets(&self.0).map(CompressedRistretto)
     }
 
-    /// Double-and-compress a batch of points.  The Ristretto encoding
-    /// is not batchable, since it requires an inverse square root.
-    ///
-    /// However, given input points \\( P\_1, \ldots, P\_n, \\)
-    /// it is possible to compute the encodings of their doubles \\(
-    /// \mathrm{enc}( \[2\]P\_1), \ldots, \mathrm{enc}( \[2\]P\_n ) \\)
-    /// in a batch.
-    ///
+
     #[cfg_attr(feature = "rand_core", doc = "```")]
     #[cfg_attr(not(feature = "rand_core"), doc = "```ignore")]
-    /// # use curve25519_dalek::ristretto::RistrettoPoint;
-    /// use rand_core::OsRng;
-    ///
-    /// # // Need fn main() here in comment so the doctest compiles
-    /// # // See https://doc.rust-lang.org/book/documentation.html#documentation-as-tests
-    /// # fn main() {
-    /// let mut rng = OsRng;
-    ///
-    /// let points: Vec<RistrettoPoint> =
-    ///     (0..32).map(|_| RistrettoPoint::random(&mut rng)).collect();
-    ///
-    /// let compressed = RistrettoPoint::double_and_compress_batch(&points);
-    ///
-    /// for (P, P2_compressed) in points.iter().zip(compressed.iter()) {
-    ///     assert_eq!(*P2_compressed, (P + P).compress());
-    /// }
-    /// # }
-    /// ```
-    // 对一组 RistrettoPoint 进行批量两倍运算（即 [2]P ）并压缩为 CompressedRistretto
+    // 两倍点2P的批量运算  压缩为CompressedRistretto
     #[cfg(feature = "alloc")]
     pub fn double_and_compress_batch<'a, I>(points: I) -> Vec<CompressedRistretto>
     where
         I: IntoIterator<Item = &'a RistrettoPoint>,
     {
         #[derive(Copy, Clone, Debug)]
-        struct BatchCompressState {
-            e: FieldElement,
-            f: FieldElement,
-            g: FieldElement,
-            h: FieldElement,
-            eg: FieldElement,
-            fh: FieldElement,
+        
+        let mut result = Vec:new();
+
+        for point in points {
+            // 两倍点
+            let dbl_point = ffi_sm2_z256_point_dbl(&point.0);
+
+            // 点压缩 33字节
+            let dbl_point_compressed = ffi_sm2_z256_point_to_compressed_octets(&dbl_point);
+
+            // 存储到Vec组中
+            result.push(CompressedRistretto(dbl_point_compressed));
         }
-
-        impl BatchCompressState {
-            fn efgh(&self) -> FieldElement {
-                &self.eg * &self.fh
-            }
-        }
-
-        impl<'a> From<&'a RistrettoPoint> for BatchCompressState {
-            #[rustfmt::skip] // keep alignment of explanatory comments
-            fn from(P: &'a RistrettoPoint) -> BatchCompressState {
-                let XX = P.0.X.square();
-                let YY = P.0.Y.square();
-                let ZZ = P.0.Z.square();
-                let dTT = &P.0.T.square() * &constants::EDWARDS_D;
-
-                let e = &P.0.X * &(&P.0.Y + &P.0.Y); // = 2*X*Y
-                let f = &ZZ + &dTT;                  // = Z^2 + d*T^2
-                let g = &YY + &XX;                   // = Y^2 - a*X^2
-                let h = &ZZ - &dTT;                  // = Z^2 - d*T^2
-
-                let eg = &e * &g;
-                let fh = &f * &h;
-
-                BatchCompressState{ e, f, g, h, eg, fh }
-            }
-        }
-
-        let states: Vec<BatchCompressState> =
-            points.into_iter().map(BatchCompressState::from).collect();
-
-        let mut invs: Vec<FieldElement> = states.iter().map(|state| state.efgh()).collect();
-
-        FieldElement::batch_invert(&mut invs[..]);
-
-        states
-            .iter()
-            .zip(invs.iter())
-            .map(|(state, inv): (&BatchCompressState, &FieldElement)| {
-                let Zinv = &state.eg * inv;
-                let Tinv = &state.fh * inv;
-
-                let mut magic = constants::INVSQRT_A_MINUS_D;
-
-                let negcheck1 = (&state.eg * &Zinv).is_negative();
-
-                let mut e = state.e;
-                let mut g = state.g;
-                let mut h = state.h;
-
-                let minus_e = -&e;
-                let f_times_sqrta = &state.f * &constants::SQRT_M1;
-
-                e.conditional_assign(&state.g, negcheck1);
-                g.conditional_assign(&minus_e, negcheck1);
-                h.conditional_assign(&f_times_sqrta, negcheck1);
-
-                magic.conditional_assign(&constants::SQRT_M1, negcheck1);
-
-                let negcheck2 = (&(&h * &e) * &Zinv).is_negative();
-
-                g.conditional_negate(negcheck2);
-
-                let mut s = &(&h - &g) * &(&magic * &(&g * &Tinv));
-
-                let s_is_negative = s.is_negative();
-                s.conditional_negate(s_is_negative);
-
-                CompressedRistretto(s.as_bytes())
-            })
-            .collect()
+        // return
+        result
     }
 
-    /// Return the coset self + E\[4\], for debugging.
-    fn coset4(&self) -> [EdwardsPoint; 4] {
-        [
-            self.0,
-            self.0 + constants::EIGHT_TORSION[2],
-            self.0 + constants::EIGHT_TORSION[4],
-            self.0 + constants::EIGHT_TORSION[6],
-        ]
-    }
 
     /// Computes the Ristretto Elligator map. This is the
     /// [`MAP`](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-ristretto255-decaf448-04#section-4.3.4)
